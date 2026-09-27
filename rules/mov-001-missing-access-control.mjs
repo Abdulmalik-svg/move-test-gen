@@ -46,7 +46,7 @@ export function check(source, filename) {
     // must not carry over to the next function (advisory #7, GHSA-5499)
     if (testOnlyNext && /\b(fun|use|struct|const|entry)\b/.test(trimmed)) testOnlyNext = false;
 
-    const fnMatch = trimmed.match(/^public(?:\s*\((?:package|friend)\))?\s+(?:entry\s+)?fun\s+(\w+)(?:<[^>]*>)?\s*\(([^)]*)\)/);
+    const fnMatch = trimmed.match(/^public(?:\s*\((package|friend)\))?\s+(entry\s+)?fun\s+(\w+)(?:<[^>]*>)?\s*\(([^)]*)\)/);
     if (!fnMatch) {
       const startMatch = trimmed.match(/^public(?:\s*\((?:package|friend)\))?\s+(?:entry\s+)?fun\s+(\w+)(?:<[^>]*>)?\s*\(/);
       if (startMatch) {
@@ -76,21 +76,37 @@ export function check(source, filename) {
         // without it, a wrapped `public(package) fun`/`public(friend) fun`
         // signature never matches here and the function is silently never
         // checked at all (contradicts CHANGELOG.md's public(package) claim).
-        const fullMatch = params.match(/public(?:\s*\((?:package|friend)\))?\s+(?:entry\s+)?fun\s+(\w+)(?:<[^>]*>)?\s*\(([^)]*)\)/);
+        const fullMatch = params.match(/public(?:\s*\((package|friend)\))?\s+(entry\s+)?fun\s+(\w+)(?:<[^>]*>)?\s*\(([^)]*)\)/);
         if (fullMatch) {
-          checkFunction(fullMatch[1], fullMatch[2], i + 1, filename, findings, isTestOnly);
+          checkFunction(fullMatch[3], fullMatch[4], i + 1, filename, findings, isTestOnly, isPackageInternal(fullMatch));
         }
       }
       continue;
     }
 
-    checkFunction(fnMatch[1], fnMatch[2], i + 1, filename, findings, isTestOnly);
+    checkFunction(fnMatch[3], fnMatch[4], i + 1, filename, findings, isTestOnly, isPackageInternal(fnMatch));
   }
 
   return findings;
 }
 
-function checkFunction(name, params, lineNo, filename, findings, isTestOnly) {
+const PACKAGE_INTERNAL_SEVERITY = 'LOW';
+
+// `public(package)` / `public(friend)` without `entry` is not a transaction
+// target, so an unguarded &mut there is only reachable through a public
+// caller -- and that caller is checked by this rule on its own. Keep
+// reporting it so nothing is silently dropped, but as LOW, pointing the
+// reviewer at the callers. `public(package) entry` IS externally callable
+// (the MOV-011 class) and stays HIGH.
+function isPackageInternal(m) {
+  return Boolean(m[1]) && !m[2];
+}
+
+function packageInternalMessage(name) {
+  return 'package-internal function modifies state without capability check: `' + name + '` is not externally callable -- verify every public caller enforces access control';
+}
+
+function checkFunction(name, params, lineNo, filename, findings, isTestOnly, packageInternal = false) {
   if (isTestOnly) return;
   if (name === 'init' || name.includes('testing') || name.includes('destroy')) return;
   if (name.startsWith('test_')) return;
@@ -135,10 +151,10 @@ function checkFunction(name, params, lineNo, filename, findings, isTestOnly) {
 
   findings.push({
     rule: RULE_ID,
-    severity: SEVERITY,
+    severity: packageInternal ? PACKAGE_INTERNAL_SEVERITY : SEVERITY,
     file: filename,
     line: lineNo,
-    message: `${TITLE}: \`${name}\` takes &mut but no capability parameter`,
+    message: packageInternal ? packageInternalMessage(name) : `${TITLE}: \`${name}\` takes &mut but no capability parameter`,
   });
 }
 

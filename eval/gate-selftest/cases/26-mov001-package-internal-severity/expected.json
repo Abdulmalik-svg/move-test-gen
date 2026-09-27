@@ -1,0 +1,5 @@
+{
+  "note": "MOV-001 severity follows reachability: anything a transaction can call (public, public entry, public(package) entry, public(friend) entry) stays HIGH; package-internal public(package)/public(friend) without entry is still reported, as LOW. Pinned for one-line and wrapped signatures; the capability exemption applies at every visibility.",
+  "type": "script",
+  "script": "test.mjs"
+}
